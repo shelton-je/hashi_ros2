@@ -1,0 +1,1 @@
+docker build -f HashiDockerfile -t "hashi" .

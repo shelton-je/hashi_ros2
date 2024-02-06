@@ -1,0 +1,29 @@
+# Use ROS 2 base image
+FROM ros:humble-ros-base
+
+# Install packages
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install DynamixelSDK from source
+RUN git clone https://github.com/ROBOTIS-GIT/DynamixelSDK.git /DynamixelSDK \
+    && cd /DynamixelSDK/python \
+    && python3 setup.py install
+
+# Setup environment
+ENV ROS_WS=/opt/ros_ws
+RUN mkdir -p $ROS_WS/src
+
+WORKDIR $ROS_WS
+
+# Copy ROS 2 package
+COPY ./hashi_ros2 ./src/hashi_ros2
+
+# Install dependencies
+RUN . /opt/ros/humble/setup.sh \
+    && apt-get update \
+    && rosdep update \
+    && rosdep install -y --from-paths src --ignore-src --rosdistro humble -r --os=ubuntu \
+    && rm -rf /var/lib/apt/lists/*

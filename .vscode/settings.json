@@ -1,0 +1,14 @@
+{
+    "python.autoComplete.extraPaths": [
+        "/home/jeremy/ros2_ws/install/hashi/local/lib/python3.10/dist-packages",
+        "/home/jeremy/ros2_ws/install/ball_chaser_controller/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/jeremy/ros2_ws/install/hashi/local/lib/python3.10/dist-packages",
+        "/home/jeremy/ros2_ws/install/ball_chaser_controller/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ]
+}
