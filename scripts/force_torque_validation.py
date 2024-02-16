@@ -2,7 +2,7 @@
 
 """Script to move the stewart platform to various configurations 
 to OptiTrack system measurements to desired poses"""
-
+# NOT RIGHT NOW
 import json
 import tqdm
 import numpy as np

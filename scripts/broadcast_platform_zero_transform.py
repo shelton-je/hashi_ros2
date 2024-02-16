@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+# NOT RIGHT NOW
 import rclpy
 from rclpy.node import Node
 

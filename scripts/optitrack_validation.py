@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+# NOT RIGHT NOW
 """Script to move the stewart platform to various configurations 
 to OptiTrack system measurements to desired poses"""
 

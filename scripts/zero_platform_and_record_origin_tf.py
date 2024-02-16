@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-
+# NOT RIGHT NOW
 import rospy
 # from stewart_end_effector.srv import StewartControl, StewartControlResponse
 import rclpy

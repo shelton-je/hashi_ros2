@@ -13,7 +13,6 @@ from math import *
 import rclpy
 from rclpy.node import Node
 import traceback
-from sensor_msgs.msg import JointState
 from threading import Lock
 from std_msgs.msg import Float32MultiArray, Int32MultiArray
 from hashi.msg import Teleop
@@ -23,7 +22,11 @@ from dynamixel_sdk.port_handler import PortHandler # goes into the port_handler.
 from dynamixel_sdk.packet_handler import PacketHandler # does the same as the previous line but PacketHandler is a function
 from dynamixel_sdk.group_sync_write import GroupSyncWrite
 from dynamixel_sdk.group_sync_read import GroupSyncRead
-from dynamixel_sdk.robotis_def import *
+from dynamixel_sdk.robotis_def import * # make sure that you do need all of them. If not, import only what you need
+
+from time import sleep
+
+
 
 # Chopstick inverse kinematics calculation and function definition
 # declare constants
@@ -126,7 +129,7 @@ class HashiControl(Node):
 
 
 
-        self.pub = self.create_publisher(Float32MultiArray, 'actual_motor_positions', queue_size=1)
+        self.pub = self.create_publisher(Float32MultiArray, 'actual_motor_positions', 10)
         self.pub_srv_lock = Lock()
         # Create connection to the QTPy
         self.create_serial_connection()
@@ -135,11 +138,25 @@ class HashiControl(Node):
         # Initialize the continuous rotation servos
         self.initializePlatformDynamixels(0)
         self.initializePlatformDynamixels(1)
-        # Make service to move the platform
+        # Make service to move the platfor
+
+
+        control_method = "service"
+
+        if control_method == "service":
+            pass
+        elif control_method == "topic":
+            pass
+        elif control_method == "topic_trajectory": # trajectory message: for move it if you have time
+            pass
+        elif control_method == "action": # get updates while runinng if you have time
+            pass
+
+
         hashi_control_server = self.create_service(HashiCommand,'hashi_control', self.compute_motor_angles_client)
-        self.l_sub = self.create_subscription(Teleop, '/hashi/commands/left', self.teleop_command_process, queue_size=1)
-        self.r_sub = self.create_subscription(Teleop, '/hashi/commands/right', self.teleop_command_process, queue_size=1)
-        self.sub_raw = self.create_subscription(Int32MultiArray, '/hashi/commands/raw', self.sync_write_stick_positions, queue_size=1)
+        self.l_sub = self.create_subscription(Teleop, '/hashi/commands/left', self.teleop_command_process, 10)
+        self.r_sub = self.create_subscription(Teleop, '/hashi/commands/right', self.teleop_command_process, 10)
+        self.sub_raw = self.create_subscription(Int32MultiArray, '/hashi/commands/raw', self.sync_write_stick_positions, 10)
 
     def servoAngles(self, coords: np.array) -> Tuple[int, int, int]:
         """Function for calculating the three servo angles for a single platform corresponding to a 3D cartesian coordinate in the workspace
@@ -337,7 +354,7 @@ class HashiControl(Node):
     # Open serial port for microcontroller interface
     def create_serial_connection(self):
         # if serial.Serial(port='/dev/ttyACM0').is_open:
-        self.ser = serial.Serial(port='/dev/sensors/hashi_endstop', baudrate=9600, timeout=None)
+        self.ser = serial.Serial(port='/dev/ttyACM0', baudrate=9600, timeout=None)
         #     print("Serial port is open! Portname is %03s" % self.ser)
         # elif serial.Serial(port='/dev/ttyACM1').is_open: 
         #     self.ser = serial.Serial(port='/dev/ttyACM1', baudrate=9600, timeout=None)    
@@ -463,7 +480,7 @@ class HashiControl(Node):
             print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result))
         self.groupSyncWrite.clearParam()
 
-        time.sleep(1)
+        sleep(1)
 
         byteState = self.ser.readline(1)
         print(byteState)
@@ -500,10 +517,11 @@ class HashiControl(Node):
         self.groupSyncWritePWM.clearParam()  # in testing, it seemed to still work fine with this commented out
 
         # THERE IS A DELAY HERE 
+        
         while True:
             
             byteState = self.ser.readline(1)
-            # print(byteState)
+            print(byteState)
             buttonState = int.from_bytes(byteState,"little")
 
             if buttonState == 1 and platform == 0:
@@ -514,6 +532,7 @@ class HashiControl(Node):
                 addparam_result = self.groupSyncWritePWM.addParam(dxls[0], dxl_stop_pwm)
                 addparam_result = self.groupSyncWritePWM.txPacket()
                 break
+        
 
         addparam_result = self.groupSyncWritePWM.addParam(dxls[0], dxl_stop_pwm)
         addparam_result = self.groupSyncWritePWM.txPacket()
@@ -558,7 +577,7 @@ class HashiControl(Node):
         z_goal_position = [DXL_LOBYTE(DXL_LOWORD(move_up_z_tick)), DXL_HIBYTE(DXL_LOWORD(move_up_z_tick)), DXL_LOBYTE(DXL_HIWORD(move_up_z_tick)), DXL_HIBYTE(DXL_HIWORD(move_up_z_tick))]
         z_addparam_result = self.groupSyncWrite.addParam(dxls[0],z_goal_position)
         dxl_comm_result = self.groupSyncWrite.txPacket()
-        time.sleep(0.5)
+        sleep(0.5)
         self.groupSyncWrite.clearParam()
 
 
@@ -733,25 +752,32 @@ def main(args=None):
     hashi_node.pwmHoming(0)
     hashi_node.pwmHoming(1)
     # Zero position
-    hashi_node.sleep(3)
+    #hashi_node.sleep(3)
+    sleep(3)
+
     Z_HOME = 230
     
 
     # Temporary node for service call
-    tmp_node = Node("temp_serivce_command")
+    tmp_node = Node("temp_publisher_command")
     # Create a client for the service
-    zero_client = tmp_node.create_client(HashiCommand, 'hashicommand')
-
+    left_pub = tmp_node.create_publisher(Teleop, '/hashi/commands/left', 10)
+    right_pub = tmp_node.create_publisher(Teleop, '/hashi/commands/right', 10)
+    print("start left")
     #center left
-    center_left = HashiCommand.Request()
-    center_left.x, center_left.y, center_left.z, center_left.psi, center_left.theta, center_left.phi, center_left.stick= 0,0,Z_HOME,0,0,0,0
-    future = zero_client.call_async(center_left)
-    rclpy.spin_until_future_complete(tmp_node, future)
+    center_left = Teleop()
+    center_left.x, center_left.y, center_left.z, center_left.psi, center_left.theta, center_left.phi, center_left.stick = 0.0, 0.0, float(Z_HOME), 0.0, 0.0, 0.0, 0
+    left_pub.publish(center_left)
+
+    print("left done")
 
     #center right
-    center_right = HashiCommand.Request()
-    center_right .x, center_right.y, center_right.z, center_right.psi, center_right.theta, center_right.phi, center_right.stick= 0,0,Z_HOME,0,0,0,1
-    future = zero_client.call_async(center_left)
+    center_right = Teleop()
+    center_right.x, center_right.y, center_right.z, center_right.psi, center_right.theta, center_right.phi, center_right.stick = 0.0, 0.0, float(Z_HOME), 0.0, 0.0, 0.0, 1
+    right_pub.publish(center_right)
+
+    print("right done")
+
     tmp_node.destroy_node()
 
     rclpy.spin(hashi_node)

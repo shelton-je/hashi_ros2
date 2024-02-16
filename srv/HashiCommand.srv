@@ -8,3 +8,9 @@ int32 stick
 ---
 bool work
 float32[] positions
+
+
+# float32[] left_chopstick_command
+# float32[] right_chopstick_command
+# ---
+# bool[] sucess # true , true, or false, false, or true false or false true
