@@ -3,6 +3,8 @@
 
 import rospy
 # from stewart_end_effector.srv import StewartControl, StewartControlResponse
+import rclpy
+from rclpy.node import Node
 
 import tf
 import tf_conversions
@@ -10,22 +12,34 @@ import tf2_ros
 import geometry_msgs.msg
 
 # from optitrack_validation import stewart_command_and_sleep, average_tf
-def average_tf(tfs):
-    sum_trans = [0,0,0]
-    sum_rot = [0,0,0,0]
-    for tf in tfs:
-        trans = tf[0]
-        rot = tf[1]
-        sum_trans = [sum(x) for x in zip(trans, sum_trans)]
-        sum_rot = [sum(x) for x in zip(rot, sum_rot)]
+class zero_platform_node(Node):
+
+    def __init__(self):
+        # call super from Node class parenet and give name to it
+        super().__init__("zero_platform")
+
+    def average_tf(tfs):
+        sum_trans = [0,0,0]
+        sum_rot = [0,0,0,0]
+        for tf in tfs:
+            trans = tf[0]
+            rot = tf[1]
+            sum_trans = [sum(x) for x in zip(trans, sum_trans)]
+            sum_rot = [sum(x) for x in zip(rot, sum_rot)]
+            
+
+        avg_trans = [sum_coord / len(tfs) for sum_coord in sum_trans]
+        avg_rot = [sum_coord / len(tfs) for sum_coord in sum_rot]
+        return (avg_trans, avg_rot)
+    
+def main(args=None):
+    rclpy.init(args=args)
+    zero_node = zero_platform_node()
     
 
-    avg_trans = [sum_coord / len(tfs) for sum_coord in sum_trans]
-    avg_rot = [sum_coord / len(tfs) for sum_coord in sum_rot]
-    return (avg_trans, avg_rot)
 
 
-if __name__ == '__main__':
+    
     rospy.init_node('OptitrackValidation', anonymous = True)
 
     # Z_HOME = rospy.get_param('z_home')
@@ -50,3 +64,7 @@ if __name__ == '__main__':
 
     rospy.set_param('zero_translation', origin_tf[0])
     rospy.set_param('zero_rotation', origin_tf[1])
+
+
+if __name__ == '__main__':
+    main()

@@ -6,13 +6,14 @@ import numpy as np
 import typing
 from typing import List, Dict, Tuple
 import serial
-import getch
+#import getch
 import os
 import time
 from math import *
 import rclpy
 from rclpy.node import Node
 import traceback
+from sensor_msgs.msg import JointState
 from threading import Lock
 from std_msgs.msg import Float32MultiArray, Int32MultiArray
 from hashi.msg import Teleop
@@ -69,8 +70,9 @@ DXL5_ID                     = 5
 DXL6_ID                     = 6
 
 class HashiControl(Node):
+
     def __init__(self):
-        super.__init__('')
+        super().__init__("hashi")
         # Initialize PortHandler instance
 
         # define different lists for testing purposes
@@ -120,6 +122,9 @@ class HashiControl(Node):
         self.groupSyncRead = GroupSyncRead(self.portHandler, self.packetHandler, ADDR_PRESENT_POSITION, LEN_PRESENT_POSITION)
         self.groupSyncReadAlarm = GroupSyncRead(self.portHandler, self.packetHandler, ADDR_HARDWARE_ERROR, LEN_HARDWARE_ERROR)
         self.groupSyncWritePWM = GroupSyncWrite(self.portHandler, self.packetHandler, ADDR_GOAL_PWM, LEN_GOAL_PWM)
+
+
+
 
         self.pub = self.create_publisher(Float32MultiArray, 'actual_motor_positions', queue_size=1)
         self.pub_srv_lock = Lock()
@@ -723,26 +728,35 @@ class HashiControl(Node):
 def main(args=None):
     rclpy.init(args=args)
     hashi_node = HashiControl()
-    rospy.init_node('MoveHashi', anonymous = True)
-
 
     # home platforms
-    controller.pwmHoming(0)
-    controller.pwmHoming(1)
+    hashi_node.pwmHoming(0)
+    hashi_node.pwmHoming(1)
     # Zero position
     hashi_node.sleep(3)
     Z_HOME = 230
-    origin = HashiCommand()
-    origin.x, origin.y, origin.z, origin.psi, origin.theta, origin.phi = 0,0,Z_HOME,0,0,0
-    hashi_command = rospy.ServiceProxy('hashi_control', HashiCommand)
-    # Center the left stick
-    hashi_command(origin.x, origin.y, origin.z, origin.psi, origin.theta, origin.phi, 0)
-    # Center the right stick
-    hashi_command(origin.x, origin.y, origin.z, origin.psi, origin.theta, origin.phi, 1)
-    rospy.spin()
+    
 
+    # Temporary node for service call
+    tmp_node = Node("temp_serivce_command")
+    # Create a client for the service
+    zero_client = tmp_node.create_client(HashiCommand, 'hashicommand')
+
+    #center left
+    center_left = HashiCommand.Request()
+    center_left.x, center_left.y, center_left.z, center_left.psi, center_left.theta, center_left.phi, center_left.stick= 0,0,Z_HOME,0,0,0,0
+    future = zero_client.call_async(center_left)
+    rclpy.spin_until_future_complete(tmp_node, future)
+
+    #center right
+    center_right = HashiCommand.Request()
+    center_right .x, center_right.y, center_right.z, center_right.psi, center_right.theta, center_right.phi, center_right.stick= 0,0,Z_HOME,0,0,0,1
+    future = zero_client.call_async(center_left)
+    tmp_node.destroy_node()
+
+    rclpy.spin(hashi_node)
     # disable all torques for all dynamixels
-    controller.deactivateDynamixels(controller.ALL_DXL_IDS)
+    hashi_node.deactivateDynamixels(hashi_node.ALL_DXL_IDS)
     
 
 if __name__ == "__main__":

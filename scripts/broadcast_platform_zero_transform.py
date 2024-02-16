@@ -10,6 +10,15 @@ class StaticTf2Broadcaster(Node):
     def __init__(self):
         super().__init__('static_tf2_broadcaster')
 
+
+        self.declare_parameter('zero_translation', 0.0) 
+        self.declare_parameter('zero_rotation', 0.0) 
+        self.set_parameters([rclpy.parameter.Parameter('zero_translation', rclpy.Parameter.Type.DOUBLE, 0.0), 
+                             rclpy.parameter.Parameter('zero_rotation', rclpy.Parameter.Type.DOUBLE, 0.0)])
+
+
+
+
         # these values are set by running zero_platform_and_record_origin_tf.py
         trans = self.get_parameter('zero_translation')
         rot = self.get_parameter('zero_rotation')
