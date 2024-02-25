@@ -23,7 +23,7 @@ from dynamixel_sdk.port_handler import PortHandler # goes into the port_handler.
 from dynamixel_sdk.packet_handler import PacketHandler # does the same as the previous line but PacketHandler is a function
 from dynamixel_sdk.group_sync_write import GroupSyncWrite
 from dynamixel_sdk.group_sync_read import GroupSyncRead
-from dynamixel_sdk.robotis_def import *
+from dynamixel_sdk.robotis_def import COMM_SUCCESS, DXL_HIBYTE, DXL_LOBYTE, DXL_HIWORD, DXL_LOWORD
 
 from time import sleep
 
@@ -243,7 +243,7 @@ class HashiControl(Node):
     def movePlatform(self, platform, coordPositions):
         print(coordPositions)
         """Moves specified platform through any number of specified cartesian points accepted by servoAngles()
-        
+        scripts/broadcast_platform_zero_transform.py scripts/force_torque_validation.py scripts/optitrack_validation.py scripts/zero_platform_and_record_origin_tf.py
         Args: platform integer number, np.array() of 1x3 coordinates
         """
         if platform == 0:
@@ -623,113 +623,6 @@ class HashiControl(Node):
     # do this by continuously reading and checking present position from linear dynamixels
     # realistically it'll still be pretty snappy for small movements, and most of the work will be done by pitch and yaw
 
-'''
-    def servoAngles(self, coords: np.array) -> Tuple[int, int, int]:
-        """Function for calculating the three servo angles for a single platform corresponding to a 3D cartesian coordinate in the workspace
-            z coordinate is relative to the HASHI baseplate
-            x and y coordinates are (currently) relative to the M8 ball joint
-                towards center of HASHI baseplate is positive y, and to the right is positive x
-
-        Args: a 1x3 np.array() of coordinates (x,y,z)
-
-        Returns: three motor tick values 
-        """
-        
-        # first extract the current coordinates
-        x = coords[0]
-        y = coords[1]
-        z = coords[2]
-
-        r = sqrt(((x)**2) + ((y)**2))
-        print(r)
-        gamma = np.arcsin(r/lc)  # gamma is the angle between the chopstick and the stationary z-axis of the frame fixed to the pivot
-        mmPerTick = 0.00244140625  # amount of linear travel in mm of the leadscrew per motor tick
-
-        delYaw = lj - lj*np.cos(np.arcsin((lps*y)/(lc*lj))) + (lys*x)/lc
-        delPitch = lj - lj*np.cos(np.arcsin((lys*x)/(lc*lj))) + (lps*y)/lc
-        delZ = z - zOffset - lc*np.cos(gamma)
-
-        thetaYaw = np.degrees(np.arcsin(delYaw/lys)) + 180
-        thetaPitch = np.degrees(np.arcsin(delPitch/lps)) + 180
-
-        # The order here matches up with the ordering in each platform
-        zTick = -round(delZ/mmPerTick)
-        pitchTick = round((4096*thetaPitch)/360)
-        yawTick = round((4096*thetaYaw)/360)
-
-        return zTick, pitchTick, yawTick 
-
-    # Set the positions of the motors to achieve a given desired pose
-    # Float Float Float Float Float Float -> void
-    def compute_motor_angles_client(self, req: HashiCommand):
-        with self.pub_srv_lock:
-            x,y,z,psi,theta,phi,stick = req.x,req.y,req.z,req.psi,req.theta,req.phi,req.stick
-            try:
-                self.movePlatform(stick, np.array([[x,y,z],[x,y,z]]))
-                return True , []
-            except Exception as e:
-                print(traceback.print_exc())
-                print("Service call failed: %s"%e)
-                return False, []
-        # Set the positions of the motors to achieve a given desired pose
-    
-
-        
-    def sync_write_carriage_positions(self, r_inc, l_inc):
-        # Split the incoming data message
-        # r_inc, l_inc = msg.data
-        # Get the current servo position
-        r_rail_pos = self.get_servo_pos(0)
-        # Write the updated position value
-        # write_single_pos(1, r_rail_pos + r_inc)
-        # Now do the same thing for the left servo
-        l_rail_pos = self.get_servo_pos(3)
-        # # Write the updated position value
-        # write_single_pos(4, l_rail_pos + l_inc)
-        return r_rail_pos + r_inc,  l_rail_pos + l_inc
-
-    def write_single_vel(self, dxl_id: int, goal_velocity: float) -> None:
-        print(f'ID: {dxl_id}, VEL: {goal_velocity}')
-        dxl_comm_result, dxl_error = self.packetHandler.write4ByteTxRx(self.portHandler, dxl_id, ADDR_GOAL_VELOCITY, 320)
-        print(dxl_comm_result)
-        if dxl_comm_result != COMM_SUCCESS:
-            print("Error communicating with the servo")
-        elif dxl_error != 0:
-            print("Servo error:", self.packetHandler.getTxRxResult(dxl_comm_result))
-        else:
-            print("Goal velocity set successfully")
-
-    def get_servo_pos(self, i):
-        DXL_ID =  self.ALL_DXL_IDS[i]
-        # with read_write_lock:
-        dxl_present_position, dxl_comm_result, dxl_error = self.packetHandler.read4ByteTxRx(self.portHandler, DXL_ID, ADDR_PRESENT_POSITION)
-        return dxl_present_position
-
-    def sync_write_stick_positions(self, msg: Int32MultiArray):
-        raw_positions = msg.data
-        motor_positions = raw_positions[:4]
-        # l-r right, u-d right, l-r left, u-d left
-        motor_indices = [1,2,4,5] # Note: These indices are -1 since lists are 0-indexed
-        for i in range(len(motor_positions)):
-            goal_position = motor_positions[i]
-            dxl_id = self.ALL_DXL_IDS[motor_indices[i]]
-            param_goal_position = [DXL_LOBYTE(DXL_LOWORD(goal_position)), DXL_HIBYTE(DXL_LOWORD(goal_position)), DXL_LOBYTE(DXL_HIWORD(goal_position)), DXL_HIBYTE(DXL_HIWORD(goal_position))]
-            dxl_addparam_result = self.groupSyncWrite.addParam(dxl_id, param_goal_position)
-            if dxl_addparam_result != True:
-                print("[ID:%03d] groupSyncWrite addparam failed" % dxl_id)
-        # Add the linear rail junk
-        r, l = self.sync_write_carriage_positions(raw_positions[4], raw_positions[5])
-        param_goal_position = [DXL_LOBYTE(DXL_LOWORD(r)), DXL_HIBYTE(DXL_LOWORD(r)), DXL_LOBYTE(DXL_HIWORD(r)), DXL_HIBYTE(DXL_HIWORD(r))]
-        dxl_addparam_result = self.groupSyncWrite.addParam(1, param_goal_position)        
-        param_goal_position = [DXL_LOBYTE(DXL_LOWORD(l)), DXL_HIBYTE(DXL_LOWORD(l)), DXL_LOBYTE(DXL_HIWORD(l)), DXL_HIBYTE(DXL_HIWORD(l))]
-        dxl_addparam_result = self.groupSyncWrite.addParam(4, param_goal_position)
-        # Syncwrite goal position
-        dxl_comm_result = self.groupSyncWrite.txPacket()
-        if dxl_comm_result != COMM_SUCCESS:
-            print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result))
-        # Clear syncwrite parameter storage
-        self.groupSyncWrite.clearParam()
-'''
 
 def main(args=None):
     rclpy.init(args=args)
