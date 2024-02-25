@@ -6,25 +6,24 @@ import numpy as np
 import typing
 from typing import List, Dict, Tuple
 import serial
-#import getch
 import os
 import time
 from math import *
 import rclpy
 from rclpy.node import Node
-from rclpy.action import ActionServer
+#from rclpy.action import ActionServer
 #from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import traceback
 from threading import Lock
 from std_msgs.msg import Float32MultiArray, Int32MultiArray
 from hashi.msg import Teleop
-from hashi.srv import HashiCommand
+#from hashi.srv import HashiCommand
 
 from dynamixel_sdk.port_handler import PortHandler # goes into the port_handler.py file and imports the class PortHandler
 from dynamixel_sdk.packet_handler import PacketHandler # does the same as the previous line but PacketHandler is a function
 from dynamixel_sdk.group_sync_write import GroupSyncWrite
 from dynamixel_sdk.group_sync_read import GroupSyncRead
-from dynamixel_sdk.robotis_def import * # make sure that you do need all of them. If not, import only what you need
+from dynamixel_sdk.robotis_def import *
 
 from time import sleep
 
@@ -139,13 +138,12 @@ class HashiControl(Node):
         self.initializePlatformDynamixels(0)
         self.initializePlatformDynamixels(1)
         
-        self._action_server_l = ActionServer(self, Teleop, '/hashi/commands/left', self.teleop_command_process)
-        self._action_server_r = ActionServer(self, Teleop, 'hashi/commands/right', self.teleop_command_process)
+        #self._action_server_l = ActionServer(self, Teleop, '/hashi/commands/left', self.teleop_command_process)
+        #self._action_server_r = ActionServer(self, Teleop, 'hashi/commands/right', self.teleop_command_process)
 
         #hashi_control_server = self.create_service(HashiCommand,'hashi_control', self.compute_motor_angles_client)
-        self.l_sub = self.create_subscription(Teleop, '/hashi/commands/left', self.teleop_command_process, 10)
-        self.r_sub = self.create_subscription(Teleop, '/hashi/commands/right', self.teleop_command_process, 10)
-        self.sub_raw = self.create_subscription(Int32MultiArray, '/hashi/commands/raw', self.sync_write_stick_positions, 10)
+        self.sub = self.create_subscription(Teleop, '/hashi/commands', self.teleop_command_process, 10)
+        #self.sub_raw = self.create_subscription(Int32MultiArray, '/hashi/commands/raw', self.sync_write_stick_positions, 10)
 
 
     # Open serial port for microcontroller interface
@@ -231,9 +229,13 @@ class HashiControl(Node):
 
     # Float Float Float Float Float Float -> void
     def teleop_command_process(self, req: Teleop):
-        x,y,z,psi,theta,phi,stick = req.x,req.y,req.z,req.psi,req.theta,req.phi,req.stick
+        x_l,y_l,z_l,x_r,y_r,z_r = req.x_l,req.y_l,req.z_l,req.x_r,req.y_r,req.z_r
         try:
-            self.movePlatform(stick, np.array([[x,y,z],[x,y,z]]))
+            self.movePlatform(0, np.array([[x_l,y_l,z_l],[x_l,y_l,z_l]]))
+        except Exception as e:
+            print(traceback.print_exc(e))
+        try:
+            self.movePlatform(1, np.array([[x_r,y_r,z_r],[x_r,y_r,z_r]]))
         except Exception as e:
             print(traceback.print_exc(e))
 
@@ -740,28 +742,19 @@ def main(args=None):
     #hashi_node.sleep(3)
     sleep(3)
 
-    Z_HOME = 230
+    Z_HOME = 230.0
     
 
     # Temporary node for service call
     tmp_node = Node("temp_publisher_command")
     # Create a client for the service
-    left_pub = tmp_node.create_publisher(Teleop, '/hashi/commands/left', 10)
-    right_pub = tmp_node.create_publisher(Teleop, '/hashi/commands/right', 10)
-    print("start left")
-    #center left
-    center_left = Teleop()
-    center_left.x, center_left.y, center_left.z, center_left.psi, center_left.theta, center_left.phi, center_left.stick = 0.0, 0.0, float(Z_HOME), 0.0, 0.0, 0.0, 0
-    left_pub.publish(center_left)
+    center_pub = tmp_node.create_publisher(Teleop, '/hashi/commands', 10)
+    print("center chopsticks")
+    center = Teleop()
+    center.x_l, center.y_l, center.z_l, center.x_r, center.y_r, center.z_r = 0.0, 0.0, Z_HOME, 0.0, 0.0, Z_HOME
+    center_pub.publish(center)
 
-    print("left done")
-
-    #center right
-    center_right = Teleop()
-    center_right.x, center_right.y, center_right.z, center_right.psi, center_right.theta, center_right.phi, center_right.stick = 0.0, 0.0, float(Z_HOME), 0.0, 0.0, 0.0, 1
-    right_pub.publish(center_right)
-
-    print("right done")
+    print("centering done")
 
     tmp_node.destroy_node()
 

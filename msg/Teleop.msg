@@ -1,7 +1,6 @@
-float32 x
-float32 y
-float32 z
-float32 psi 
-float32 theta 
-float32 phi
-int32 stick
+float32 x_l
+float32 y_l
+float32 z_l
+float32 x_r
+float32 y_r
+float32 z_r
