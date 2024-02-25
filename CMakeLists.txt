@@ -27,14 +27,14 @@ find_package(message_filters REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 install(PROGRAMS
-  scripts/dual_chopstick_validation_ros.py
-  scripts/force_torque_validation.py
+  scripts/hashi_control.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Teleop.msg"
   "srv/HashiCommand.srv"
+  "action/JointTrajectory.action"
   DEPENDENCIES std_msgs geometry_msgs
 )
 

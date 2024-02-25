@@ -1,0 +1,17 @@
+float32 x_l
+float32 y_l
+float32 z_l
+float32 psi_l
+float32 theta_l 
+float32 phi_l
+float32 x_r
+float32 y_r
+float32 z_r
+float32 psi_r
+float32 theta_r 
+float32 phi_r
+float32 duration_r
+---
+#result
+---
+#feedback

@@ -12,6 +12,8 @@ import time
 from math import *
 import rclpy
 from rclpy.node import Node
+from rclpy.action import ActionServer
+#from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import traceback
 from threading import Lock
 from std_msgs.msg import Float32MultiArray, Int32MultiArray
@@ -98,7 +100,7 @@ class HashiControl(Node):
         self.MAX_CW_PWM                  = -885
         self.MAX_CCW_PWM                 = 885
 
-                # Set the port path
+        # Set the port path
         # Get methods and members of PortHandlerLinux or PortHandlerWindows
         self.portHandler = PortHandler(self.DEVICENAME)
         # Open U2D2 port
@@ -127,8 +129,6 @@ class HashiControl(Node):
         self.groupSyncWritePWM = GroupSyncWrite(self.portHandler, self.packetHandler, ADDR_GOAL_PWM, LEN_GOAL_PWM)
 
 
-
-
         self.pub = self.create_publisher(Float32MultiArray, 'actual_motor_positions', 10)
         self.pub_srv_lock = Lock()
         # Create connection to the QTPy
@@ -138,87 +138,175 @@ class HashiControl(Node):
         # Initialize the continuous rotation servos
         self.initializePlatformDynamixels(0)
         self.initializePlatformDynamixels(1)
-        # Make service to move the platfor
+        
+        self._action_server_l = ActionServer(self, Teleop, '/hashi/commands/left', self.teleop_command_process)
+        self._action_server_r = ActionServer(self, Teleop, 'hashi/commands/right', self.teleop_command_process)
 
-
-        control_method = "service"
-
-        if control_method == "service":
-            pass
-        elif control_method == "topic":
-            pass
-        elif control_method == "topic_trajectory": # trajectory message: for move it if you have time
-            pass
-        elif control_method == "action": # get updates while runinng if you have time
-            pass
-
-
-        hashi_control_server = self.create_service(HashiCommand,'hashi_control', self.compute_motor_angles_client)
+        #hashi_control_server = self.create_service(HashiCommand,'hashi_control', self.compute_motor_angles_client)
         self.l_sub = self.create_subscription(Teleop, '/hashi/commands/left', self.teleop_command_process, 10)
         self.r_sub = self.create_subscription(Teleop, '/hashi/commands/right', self.teleop_command_process, 10)
         self.sub_raw = self.create_subscription(Int32MultiArray, '/hashi/commands/raw', self.sync_write_stick_positions, 10)
 
-    def servoAngles(self, coords: np.array) -> Tuple[int, int, int]:
-        """Function for calculating the three servo angles for a single platform corresponding to a 3D cartesian coordinate in the workspace
-            z coordinate is relative to the HASHI baseplate
-            x and y coordinates are (currently) relative to the M8 ball joint
-                towards center of HASHI baseplate is positive y, and to the right is positive x
 
-        Args: a 1x3 np.array() of coordinates (x,y,z)
+    # Open serial port for microcontroller interface
+    def create_serial_connection(self):
+        self.ser = serial.Serial(port='/dev/ttyACM0', baudrate=9600, timeout=None)
 
-        Returns: three motor tick values 
+
+    def initializeDynamixels(self):
+        """Initializes all of the dynamixels. Puts z-axis dynamixels in continuous position, enables torque for all, 
+        adds groupSyncRead parameter storage for all 
         """
-        
-        # first extract the current coordinates
-        x = coords[0]
-        y = coords[1]
-        z = coords[2]
 
-        r = sqrt(((x)**2) + ((y)**2))
-        print(r)
-        gamma = np.arcsin(r/lc)  # gamma is the angle between the chopstick and the stationary z-axis of the frame fixed to the pivot
-        mmPerTick = 0.00244140625  # amount of linear travel in mm of the leadscrew per motor tick
+        for dxl_id in self.LINEAR_DXL_IDS:
 
-        delYaw = lj - lj*np.cos(np.arcsin((lps*y)/(lc*lj))) + (lys*x)/lc
-        delPitch = lj - lj*np.cos(np.arcsin((lys*x)/(lc*lj))) + (lps*y)/lc
-        delZ = z - zOffset - lc*np.cos(gamma)
+            # put all linear dynamixels in continuous position mode
+            dxl_comm_result_operating, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxl_id, ADDR_OPERATING_MODE, DXL_OPERATING_MODE)
+            dxl_comm_result_torque, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, self.TORQUE_ENABLE)
+            dxl_addparam_result = self.groupSyncRead.addParam(dxl_id)
 
-        thetaYaw = np.degrees(np.arcsin(delYaw/lys)) + 180
-        thetaPitch = np.degrees(np.arcsin(delPitch/lps)) + 180
+            if dxl_comm_result_operating != COMM_SUCCESS:
+                print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result_operating))
+            elif dxl_error != 0:
+                print("%s" % self.packetHandler.getRxPacketError(dxl_error))
+            else:
+                print("Dynamixel#%d has been successfully put in continuous position mode" % dxl_id)
 
-        # The order here matches up with the ordering in each platform
-        zTick = -round(delZ/mmPerTick)
-        pitchTick = round((4096*thetaPitch)/360)
-        yawTick = round((4096*thetaYaw)/360)
+            # now enable torques for the linear dynamixels
+            if dxl_comm_result_torque != COMM_SUCCESS:
+                print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result_operating))
+            elif dxl_error != 0:
+                print("%s" % self.packetHandler.getRxPacketError(dxl_error))
+            else:
+                print("Dynamixel#%d has been successfully connected" % dxl_id)
+            
+            if dxl_addparam_result != True:
+                print("[ID:%03d] groupSyncRead addparam failed" % dxl_id)
+                quit()
 
-        return zTick, pitchTick, yawTick
-    
-    
-    def circle_intersection(self, a1, b1, r1, a2, b2, r2):
-        # first points are location of circle slice from chopstick butt
-        # second points are location of circle on specified pitch/yaw horn
-        # Calculate the distance between the centers of the circles
-        d = sqrt((a2 - a1)**2 + (b2 - b1)**2)
+        # enable the torque for the remaining dynamixels, by default they're in position mode 
 
-        # Calculate the intersection points
-        a = (r1**2 - r2**2 + d**2) / (2 * d)
-        # print("the calculated a value is: " + str(a))
-        h = sqrt(r1**2 - a**2)
-        # print(h)
+        for dxl_id in self.POSITION_DXL_IDS:
 
-        # Calculate the coordinates of the intersection points
-        x3 = a1 + (a * (a2 - a1)) / d
-        y3 = b1 + (a * (b2 - b1)) / d
+            # enable all Dynamixel Torques
+            dxl_comm_result, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, self.TORQUE_ENABLE)
+            if dxl_comm_result != COMM_SUCCESS:
+                print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result))
+            elif dxl_error != 0:
+                print("%s" % self.packetHandler.getRxPacketError(dxl_error))
+            else:
+                print("Dynamixel#%d has been successfully connected" % dxl_id)
+            
+            # Add parameter storage for Dynamixel present position value
+            dxl_addparam_result = self.groupSyncRead.addParam(dxl_id)
+            if dxl_addparam_result != True:
+                print("[ID:%03d] groupSyncRead addparam failed" % dxl_id)
 
-        if h == 0:
-            return [(x3, y3)]  # Tangent circles, one intersection point
+                quit()
+
+
+    def initializePlatformDynamixels(self, platform):
+        """Initializes all dynamixels for a specified platform
+
+        Args: an integer between 0 and 1 corresponding to the desired platform
+        """
+        if platform == 0:
+            dxls = self.PLATFORM0_DXL_IDS
+        elif platform == 1: 
+            dxls = self.PLATFORM1_DXL_IDS
         else:
-            # Calculate the two intersection points
-            x4 = round(x3 + (h * (b2 - b1)) / d, 3)
-            y4 = round(y3 - (h * (a2 - a1)) / d, 3)
-            x5 = round(x3 - (h * (b2 - b1)) / d, 3)
-            y5 = round(y3 + (h * (a2 - a1)) / d, 3)
-            return [(x4, y4), (x5, y5)]
+            print("No platform specified")
+
+        # linear dxl first
+        dxl_comm_result_operating, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxls[0], ADDR_OPERATING_MODE, DXL_OPERATING_MODE)
+        dxl_comm_result_torque, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxls[0], ADDR_TORQUE_ENABLE, self.TORQUE_ENABLE)
+        dxl_addparam_result = self.groupSyncRead.addParam(dxls[0])
+
+        for dxl in dxls[1:]:
+            dxl_comm_result, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxl, ADDR_TORQUE_ENABLE, self.TORQUE_ENABLE)
+            dxl_addparam_result = self.groupSyncRead.addParam(dxl)
+
+        print("Platform %d Dynamixels successfully initialized" % platform)
+
+
+    # Float Float Float Float Float Float -> void
+    def teleop_command_process(self, req: Teleop):
+        x,y,z,psi,theta,phi,stick = req.x,req.y,req.z,req.psi,req.theta,req.phi,req.stick
+        try:
+            self.movePlatform(stick, np.array([[x,y,z],[x,y,z]]))
+        except Exception as e:
+            print(traceback.print_exc(e))
+
+    
+    def movePlatform(self, platform, coordPositions):
+        print(coordPositions)
+        """Moves specified platform through any number of specified cartesian points accepted by servoAngles()
+        
+        Args: platform integer number, np.array() of 1x3 coordinates
+        """
+        if platform == 0:
+            dxls = self.PLATFORM0_DXL_IDS
+        elif platform == 1: 
+            dxls = self.PLATFORM1_DXL_IDS
+        else:
+            print("No platform specified")
+
+        for i in range(len(coordPositions)):
+            
+            if coordPositions[i,0] < -50 or coordPositions[i,0] > 50:
+                break
+            elif coordPositions[i,1] < -50 or coordPositions[i,1] > 50:
+                break
+            elif coordPositions[i,2] < 225 or coordPositions[i,2] > 260:
+                break
+
+            [zTick, pitchTick, yawTick] = self.sphericalServoAngles(coordPositions[i])
+            # [zTick,pitchTick,yawTick] = self.servoAngles(coordPositions[i])
+            z_goal_position = [DXL_LOBYTE(DXL_LOWORD(zTick)), DXL_HIBYTE(DXL_LOWORD(zTick)), DXL_LOBYTE(DXL_HIWORD(zTick)), DXL_HIBYTE(DXL_HIWORD(zTick))]
+            pitch_goal_position = [DXL_LOBYTE(DXL_LOWORD(pitchTick)), DXL_HIBYTE(DXL_LOWORD(pitchTick)), DXL_LOBYTE(DXL_HIWORD(pitchTick)), DXL_HIBYTE(DXL_HIWORD(pitchTick))] 
+            yaw_goal_position = [DXL_LOBYTE(DXL_LOWORD(yawTick)), DXL_HIBYTE(DXL_LOWORD(yawTick)), DXL_LOBYTE(DXL_HIWORD(yawTick)), DXL_HIBYTE(DXL_HIWORD(yawTick))]
+
+            z_addparam_result = self.groupSyncWrite.addParam(dxls[0],z_goal_position)
+            if z_addparam_result != True:
+                print(z_addparam_result)
+                print("[ID:%03d] groupSyncWrite addparam failed for z" % dxls[0])
+                quit()
+            pitch_addparam_result = self.groupSyncWrite.addParam(dxls[1], pitch_goal_position)
+            if pitch_addparam_result!= True:
+                print(pitch_addparam_result)
+                print("[ID:%03d] groupSyncWrite addparam failed for pitch" % dxls[1])
+                quit()
+            yaw_addparam_result = self.groupSyncWrite.addParam(dxls[2], yaw_goal_position)
+            if yaw_addparam_result != True:
+                print("[ID:%03d] groupSyncWrite addparam failed for yaw" % dxls[2])
+                quit()
+            
+            # syncwrite current goal position
+            dxl_comm_result = self.groupSyncWrite.txPacket()
+            if dxl_comm_result != COMM_SUCCESS:
+                print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result))
+            time.sleep(0.01)
+            # Clear syncwrite parameter storage
+            self.groupSyncWrite.clearParam()
+            
+            # Syncread present position
+            dxl_comm_result = self.groupSyncRead.txRxPacket()
+            if dxl_comm_result != COMM_SUCCESS:
+                print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result))
+            
+            # get present position values
+            z_present_position = self.groupSyncRead.getData(dxls[0], ADDR_PRESENT_POSITION, LEN_PRESENT_POSITION)
+            pitch_present_position = self.groupSyncRead.getData(dxls[1], ADDR_PRESENT_POSITION, LEN_PRESENT_POSITION)
+            yaw_present_position = self.groupSyncRead.getData(dxls[2], ADDR_PRESENT_POSITION, LEN_PRESENT_POSITION)
+
+            # print present position values
+            print("The present positions of platform %d are z: %03d, pitch: %03d, yaw: %03d" % (platform, z_present_position, pitch_present_position, yaw_present_position))
+
+            # clear syncread parameter storage
+            self.groupSyncRead.clearParam()
+
+        print("Platform %d is done moving" % platform)
+
     
     def sphericalServoAngles(self, coords: np.array) -> Tuple[int, int, int]:
         """Function to calculate the pitch, yaw, and linear servo positions based on formulation of the chopsticks in modified spherical coordinates.
@@ -350,105 +438,33 @@ class HashiControl(Node):
 
         return zTick, pitchTick, yawTick
 
+   
+    def circle_intersection(self, a1, b1, r1, a2, b2, r2):
+        # first points are location of circle slice from chopstick butt
+        # second points are location of circle on specified pitch/yaw horn
+        # Calculate the distance between the centers of the circles
+        d = sqrt((a2 - a1)**2 + (b2 - b1)**2)
 
-    # Open serial port for microcontroller interface
-    def create_serial_connection(self):
-        # if serial.Serial(port='/dev/ttyACM0').is_open:
-        self.ser = serial.Serial(port='/dev/ttyACM0', baudrate=9600, timeout=None)
-        #     print("Serial port is open! Portname is %03s" % self.ser)
-        # elif serial.Serial(port='/dev/ttyACM1').is_open: 
-        #     self.ser = serial.Serial(port='/dev/ttyACM1', baudrate=9600, timeout=None)    
-        #     print("Serial port is open! Portname is %s" % self.ser)
-        # else:
-        #     self.ser = serial.Serial(port='/dev/ttyACM2', baudrate=9600, timeout=None)    
-        #     print("Serial port is open! Portname is %s" % self.ser)
+        # Calculate the intersection points
+        a = (r1**2 - r2**2 + d**2) / (2 * d)
+        # print("the calculated a value is: " + str(a))
+        h = sqrt(r1**2 - a**2)
+        # print(h)
 
-    # change modes of all dynamixels
-    # dynamixels 2-3 and 5-6 should be in position mode
-    # dynamixels 1 and 4 should be in extended position mode
+        # Calculate the coordinates of the intersection points
+        x3 = a1 + (a * (a2 - a1)) / d
+        y3 = b1 + (a * (b2 - b1)) / d
 
-    def initializeDynamixels(self):
-        """Initializes all of the dynamixels. Puts z-axis dynamixels in continuous position, enables torque for all, 
-        adds groupSyncRead parameter storage for all 
-        """
-
-        for dxl_id in self.LINEAR_DXL_IDS:
-
-            # put all linear dynamixels in continuous position mode
-            dxl_comm_result_operating, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxl_id, ADDR_OPERATING_MODE, DXL_OPERATING_MODE)
-            dxl_comm_result_torque, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, self.TORQUE_ENABLE)
-            dxl_addparam_result = self.groupSyncRead.addParam(dxl_id)
-
-            if dxl_comm_result_operating != COMM_SUCCESS:
-                print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result_operating))
-            elif dxl_error != 0:
-                print("%s" % self.packetHandler.getRxPacketError(dxl_error))
-            else:
-                print("Dynamixel#%d has been successfully put in continuous position mode" % dxl_id)
-
-            # now enable torques for the linear dynamixels
-            if dxl_comm_result_torque != COMM_SUCCESS:
-                print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result_operating))
-            elif dxl_error != 0:
-                print("%s" % self.packetHandler.getRxPacketError(dxl_error))
-            else:
-                print("Dynamixel#%d has been successfully connected" % dxl_id)
-            
-            if dxl_addparam_result != True:
-                print("[ID:%03d] groupSyncRead addparam failed" % dxl_id)
-                quit()
-
-        # enable the torque for the remaining dynamixels, by default they're in position mode 
-
-        for dxl_id in self.POSITION_DXL_IDS:
-
-            # enable all Dynamixel Torques
-            dxl_comm_result, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, self.TORQUE_ENABLE)
-            if dxl_comm_result != COMM_SUCCESS:
-                print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result))
-            elif dxl_error != 0:
-                print("%s" % self.packetHandler.getRxPacketError(dxl_error))
-            else:
-                print("Dynamixel#%d has been successfully connected" % dxl_id)
-            
-            # Add parameter storage for Dynamixel present position value
-            dxl_addparam_result = self.groupSyncRead.addParam(dxl_id)
-            if dxl_addparam_result != True:
-                print("[ID:%03d] groupSyncRead addparam failed" % dxl_id)
-
-                quit()
-
-    def initializePlatformDynamixels(self, platform):
-        """Initializes all dynamixels for a specified platform
-
-        Args: an integer between 0 and 1 corresponding to the desired platform
-        """
-        if platform == 0:
-            dxls = self.PLATFORM0_DXL_IDS
-        elif platform == 1: 
-            dxls = self.PLATFORM1_DXL_IDS
+        if h == 0:
+            return [(x3, y3)]  # Tangent circles, one intersection point
         else:
-            print("No platform specified")
-
-        # linear dxl first
-        dxl_comm_result_operating, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxls[0], ADDR_OPERATING_MODE, DXL_OPERATING_MODE)
-        dxl_comm_result_torque, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxls[0], ADDR_TORQUE_ENABLE, self.TORQUE_ENABLE)
-        dxl_addparam_result = self.groupSyncRead.addParam(dxls[0])
-
-        for dxl in dxls[1:]:
-            dxl_comm_result, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxl, ADDR_TORQUE_ENABLE, self.TORQUE_ENABLE)
-            dxl_addparam_result = self.groupSyncRead.addParam(dxl)
-
-        print("Platform %d Dynamixels successfully initialized" % platform)
-
-    def deactivateDynamixels(self, dxls):
-        """Deactivates all dynamixels in a list
+            # Calculate the two intersection points
+            x4 = round(x3 + (h * (b2 - b1)) / d, 3)
+            y4 = round(y3 - (h * (a2 - a1)) / d, 3)
+            x5 = round(x3 - (h * (b2 - b1)) / d, 3)
+            y5 = round(y3 + (h * (a2 - a1)) / d, 3)
+            return [(x4, y4), (x5, y5)]
         
-        Args: a single dynamixel ID or a list of them
-        """
-        for dxl_id in dxls:
-            dxl_comm_result_torque, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, self.TORQUE_DISABLE)
-            
 
     def pwmHoming(self, platform):
         """Homing routine for each platform. Moves the z-axis until a microswitch connected to the microcontroller is pressed
@@ -584,6 +600,14 @@ class HashiControl(Node):
         return dxl_zero_position
 
 
+    def deactivateDynamixels(self, dxls):
+        """Deactivates all dynamixels in a list
+        
+        Args: a single dynamixel ID or a list of them
+        """
+        for dxl_id in dxls:
+            dxl_comm_result_torque, dxl_error = self.packetHandler.write1ByteTxRx(self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, self.TORQUE_DISABLE)
+            
 
     # For some reason, setting the homing offset at the end of the movement doesn't work, so I have to set it, zero it,
     # read the position after zeroing it, make it the inverse of that, and then set it again 
@@ -597,76 +621,42 @@ class HashiControl(Node):
     # do this by continuously reading and checking present position from linear dynamixels
     # realistically it'll still be pretty snappy for small movements, and most of the work will be done by pitch and yaw
 
+'''
+    def servoAngles(self, coords: np.array) -> Tuple[int, int, int]:
+        """Function for calculating the three servo angles for a single platform corresponding to a 3D cartesian coordinate in the workspace
+            z coordinate is relative to the HASHI baseplate
+            x and y coordinates are (currently) relative to the M8 ball joint
+                towards center of HASHI baseplate is positive y, and to the right is positive x
 
-    def movePlatform(self, platform, coordPositions):
-        print(coordPositions)
-        """Moves specified platform through any number of specified cartesian points accepted by servoAngles()
-        
-        Args: platform integer number, np.array() of 1x3 coordinates
+        Args: a 1x3 np.array() of coordinates (x,y,z)
+
+        Returns: three motor tick values 
         """
-        if platform == 0:
-            dxls = self.PLATFORM0_DXL_IDS
-        elif platform == 1: 
-            dxls = self.PLATFORM1_DXL_IDS
-        else:
-            print("No platform specified")
+        
+        # first extract the current coordinates
+        x = coords[0]
+        y = coords[1]
+        z = coords[2]
 
-        for i in range(len(coordPositions)):
-            
-            if coordPositions[i,0] < -50 or coordPositions[i,0] > 50:
-                break
-            elif coordPositions[i,1] < -50 or coordPositions[i,1] > 50:
-                break
-            elif coordPositions[i,2] < 225 or coordPositions[i,2] > 260:
-                break
+        r = sqrt(((x)**2) + ((y)**2))
+        print(r)
+        gamma = np.arcsin(r/lc)  # gamma is the angle between the chopstick and the stationary z-axis of the frame fixed to the pivot
+        mmPerTick = 0.00244140625  # amount of linear travel in mm of the leadscrew per motor tick
 
-            [zTick, pitchTick, yawTick] = self.sphericalServoAngles(coordPositions[i])
-            # [zTick,pitchTick,yawTick] = self.servoAngles(coordPositions[i])
-            z_goal_position = [DXL_LOBYTE(DXL_LOWORD(zTick)), DXL_HIBYTE(DXL_LOWORD(zTick)), DXL_LOBYTE(DXL_HIWORD(zTick)), DXL_HIBYTE(DXL_HIWORD(zTick))]
-            pitch_goal_position = [DXL_LOBYTE(DXL_LOWORD(pitchTick)), DXL_HIBYTE(DXL_LOWORD(pitchTick)), DXL_LOBYTE(DXL_HIWORD(pitchTick)), DXL_HIBYTE(DXL_HIWORD(pitchTick))] 
-            yaw_goal_position = [DXL_LOBYTE(DXL_LOWORD(yawTick)), DXL_HIBYTE(DXL_LOWORD(yawTick)), DXL_LOBYTE(DXL_HIWORD(yawTick)), DXL_HIBYTE(DXL_HIWORD(yawTick))]
+        delYaw = lj - lj*np.cos(np.arcsin((lps*y)/(lc*lj))) + (lys*x)/lc
+        delPitch = lj - lj*np.cos(np.arcsin((lys*x)/(lc*lj))) + (lps*y)/lc
+        delZ = z - zOffset - lc*np.cos(gamma)
 
-            z_addparam_result = self.groupSyncWrite.addParam(dxls[0],z_goal_position)
-            if z_addparam_result != True:
-                print(z_addparam_result)
-                print("[ID:%03d] groupSyncWrite addparam failed for z" % dxls[0])
-                quit()
-            pitch_addparam_result = self.groupSyncWrite.addParam(dxls[1], pitch_goal_position)
-            if pitch_addparam_result!= True:
-                print(pitch_addparam_result)
-                print("[ID:%03d] groupSyncWrite addparam failed for pitch" % dxls[1])
-                quit()
-            yaw_addparam_result = self.groupSyncWrite.addParam(dxls[2], yaw_goal_position)
-            if yaw_addparam_result != True:
-                print("[ID:%03d] groupSyncWrite addparam failed for yaw" % dxls[2])
-                quit()
-            
-            # syncwrite current goal position
-            dxl_comm_result = self.groupSyncWrite.txPacket()
-            if dxl_comm_result != COMM_SUCCESS:
-                print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result))
-            time.sleep(0.01)
-            # Clear syncwrite parameter storage
-            self.groupSyncWrite.clearParam()
-            
-            # Syncread present position
-            dxl_comm_result = self.groupSyncRead.txRxPacket()
-            if dxl_comm_result != COMM_SUCCESS:
-                print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result))
-            
-            # get present position values
-            z_present_position = self.groupSyncRead.getData(dxls[0], ADDR_PRESENT_POSITION, LEN_PRESENT_POSITION)
-            pitch_present_position = self.groupSyncRead.getData(dxls[1], ADDR_PRESENT_POSITION, LEN_PRESENT_POSITION)
-            yaw_present_position = self.groupSyncRead.getData(dxls[2], ADDR_PRESENT_POSITION, LEN_PRESENT_POSITION)
+        thetaYaw = np.degrees(np.arcsin(delYaw/lys)) + 180
+        thetaPitch = np.degrees(np.arcsin(delPitch/lps)) + 180
 
-            # print present position values
-            print("The present positions of platform %d are z: %03d, pitch: %03d, yaw: %03d" % (platform, z_present_position, pitch_present_position, yaw_present_position))
+        # The order here matches up with the ordering in each platform
+        zTick = -round(delZ/mmPerTick)
+        pitchTick = round((4096*thetaPitch)/360)
+        yawTick = round((4096*thetaYaw)/360)
 
-            # clear syncread parameter storage
-            self.groupSyncRead.clearParam()
+        return zTick, pitchTick, yawTick 
 
-        print("Platform %d is done moving" % platform)
-    
     # Set the positions of the motors to achieve a given desired pose
     # Float Float Float Float Float Float -> void
     def compute_motor_angles_client(self, req: HashiCommand):
@@ -681,13 +671,7 @@ class HashiControl(Node):
                 return False, []
         # Set the positions of the motors to achieve a given desired pose
     
-    # Float Float Float Float Float Float -> void
-    def teleop_command_process(self, req: HashiCommand):
-        x,y,z,psi,theta,phi,stick = req.x,req.y,req.z,req.psi,req.theta,req.phi,req.stick
-        try:
-            self.movePlatform(stick, np.array([[x,y,z],[x,y,z]]))
-        except Exception as e:
-            print(traceback.print_exc())
+
         
     def sync_write_carriage_positions(self, r_inc, l_inc):
         # Split the incoming data message
@@ -743,6 +727,7 @@ class HashiControl(Node):
             print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result))
         # Clear syncwrite parameter storage
         self.groupSyncWrite.clearParam()
+'''
 
 def main(args=None):
     rclpy.init(args=args)
