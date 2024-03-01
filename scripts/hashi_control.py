@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 
-# This is the first attempt to validate both of the chopsticks moving in tandem 
-
 import numpy as np
-import typing
 from typing import List, Dict, Tuple
 import serial
 import os
@@ -11,13 +8,10 @@ import time
 from math import *
 import rclpy
 from rclpy.node import Node
-#from rclpy.action import ActionServer
-#from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import traceback
 from threading import Lock
 from std_msgs.msg import Float32MultiArray, Int32MultiArray
 from hashi.msg import Teleop
-#from hashi.srv import HashiCommand
 
 from dynamixel_sdk.port_handler import PortHandler # goes into the port_handler.py file and imports the class PortHandler
 from dynamixel_sdk.packet_handler import PacketHandler # does the same as the previous line but PacketHandler is a function
@@ -26,7 +20,6 @@ from dynamixel_sdk.group_sync_read import GroupSyncRead
 from dynamixel_sdk.robotis_def import COMM_SUCCESS, DXL_HIBYTE, DXL_LOBYTE, DXL_HIWORD, DXL_LOWORD
 
 from time import sleep
-
 
 
 # Chopstick inverse kinematics calculation and function definition
@@ -130,21 +123,18 @@ class HashiControl(Node):
 
         self.pub = self.create_publisher(Float32MultiArray, 'actual_motor_positions', 10)
         self.pub_srv_lock = Lock()
+        
         # Create connection to the QTPy
         self.create_serial_connection()
+
         # Initialize the upright zeros
         self.initializeDynamixels()
+
         # Initialize the continuous rotation servos
         self.initializePlatformDynamixels(0)
         self.initializePlatformDynamixels(1)
-        
-        #self._action_server_l = ActionServer(self, Teleop, '/hashi/commands/left', self.teleop_command_process)
-        #self._action_server_r = ActionServer(self, Teleop, 'hashi/commands/right', self.teleop_command_process)
 
-        #hashi_control_server = self.create_service(HashiCommand,'hashi_control', self.compute_motor_angles_client)
         self.sub = self.create_subscription(Teleop, '/hashi/commands', self.teleop_command_process, 10)
-        #self.sub_raw = self.create_subscription(Int32MultiArray, '/hashi/commands/raw', self.sync_write_stick_positions, 10)
-
 
     # Open serial port for microcontroller interface
     def create_serial_connection(self):
@@ -418,8 +408,6 @@ class HashiControl(Node):
         print("Remaining yaw point: " + str(yaw_intersections))
 
         # now calculate servo angles based on coordinates
-        # delPitchAngle = delAngle(-32.5,0,pitch_intersections[0][0],pitch_intersections[0][1])
-        # delPitchAngle = delAngle(pitch_intersections[0][0],pitch_intersections[0][1],-32.5,-lps)
         delPitch2 = delAngle2(-32.5,0,pitch_intersections[0][0],pitch_intersections[0][1])
         # delPitchAngle = delAngle(-32.5,-lps,-31.5,-26) + 180
         # print("delta pitch angle is: %03f" % delPitch2)
@@ -631,24 +619,19 @@ def main(args=None):
     # home platforms
     hashi_node.pwmHoming(0)
     hashi_node.pwmHoming(1)
-    # Zero position
-    #hashi_node.sleep(3)
     sleep(3)
-
     Z_HOME = 230.0
     
-
-    # Temporary node for service call
+    # Temporary node for centering 
     tmp_node = Node("temp_publisher_command")
-    # Create a client for the service
     center_pub = tmp_node.create_publisher(Teleop, '/hashi/commands', 10)
     print("center chopsticks")
     center = Teleop()
     center.x_l, center.y_l, center.z_l, center.x_r, center.y_r, center.z_r = 0.0, 0.0, Z_HOME, 0.0, 0.0, Z_HOME
     center_pub.publish(center)
-
     print("centering done")
 
+    # destory temp node after centering
     tmp_node.destroy_node()
 
     rclpy.spin(hashi_node)
